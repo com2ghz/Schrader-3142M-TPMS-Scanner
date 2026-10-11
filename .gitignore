@@ -1,0 +1,22 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Python virtualenv (lokale PlatformIO CLI)
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build artifacts
+*.bin
+*.elf
+*.map
+
+# Serieel-logs van testritten
+logs/
+*.log
+compile_commands.json
