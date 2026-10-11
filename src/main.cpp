@@ -122,14 +122,17 @@ static int findOrClaimSlot(uint32_t id, uint32_t nowMs) {
   return -1;
 }
 
-static void recordReading(uint32_t id, float kPa, float tempC, int rssi) {
+// Geeft true als dit ID niet eerder in een slot stond. De caller gebruikt dat
+// om eenmalig een goed vindbare ID-regel te loggen.
+static bool recordReading(uint32_t id, float kPa, float tempC, int rssi) {
   if (xSemaphoreTake(sensorMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
-    return;
+    return false;
   }
   uint32_t nowMs = millis();
   int slot = findOrClaimSlot(id, nowMs);
+  bool isNew = false;
   if (slot >= 0) {
-    bool isNew = !sensors[slot].valid || sensors[slot].id != id;
+    isNew = !sensors[slot].valid || sensors[slot].id != id;
     sensors[slot].id             = id;
     sensors[slot].pressure_kPa   = kPa;
     sensors[slot].temperature_C  = tempC;
@@ -139,6 +142,7 @@ static void recordReading(uint32_t id, float kPa, float tempC, int rssi) {
     sensors[slot].valid          = true;
   }
   xSemaphoreGive(sensorMutex);
+  return isNew;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +178,7 @@ void rtl_433_Callback(char* message) {
     return;
   }
 
-  recordReading(id, kPa, tempC, rssi);
+  bool isNewId = recordReading(id, kPa, tempC, rssi);
 
   // De 0.5 kPa/bit schaal in de rtl_433-decoder is afgeleid uit een beperkte
   // sample-set (issue #3512), niet uit een datasheet. Log de ruwe waarde mee
@@ -189,8 +193,28 @@ void rtl_433_Callback(char* message) {
   snprintf(kpaStr,  sizeof(kpaStr),  "%.1f", kPa);
   snprintf(tempStr, sizeof(tempStr), "%.1f", tempC);
 
-  Log.notice(F("[SCHRADER] id=%u  %s bar (%s kPa, raw=%d)  %s C  rssi=%d" CR),
-             id, barStr, kpaStr, rawPressure, tempStr, rssi);
+  // ID zowel decimaal als hex. Programmeertools verschillen daarin: MotoScan
+  // wil een decimaal nummer, op sensoren en in sommige tools staat de
+  // hex-vorm. Beide loggen voorkomt een handmatige omrekening en de
+  // bijbehorende rekenfout.
+  //
+  // Via snprintf en niet via ArduinoLog's %X: die zet er "0x" voor en negeert
+  // de veldbreedte volledig. Een ID als 282353 is hex 044EF1 en zou dan als
+  // 44EF1 verschijnen - een ontbrekende voorloopnul die je bij het
+  // programmeren in de motor de kop kost.
+  char idHex[12];
+  snprintf(idHex, sizeof(idHex), "%06lX", (unsigned long)id);
+
+  Log.notice(F("[SCHRADER] id=%u (hex %s)  %s bar (%s kPa, raw=%d)  %s C  rssi=%d" CR),
+             id, idHex, barStr, kpaStr, rawPressure, tempStr, rssi);
+
+  // Bij de eerste keer dat een ID langskomt een aparte, goed vindbare regel.
+  // Tijdens een testrit lopen er honderden regels voorbij; dit is degene die
+  // je terug wilt zoeken om het nummer in de motor te programmeren.
+  if (isNewId) {
+    Log.notice(F("[NIEUW ID] decimaal=%u  hex=%s   <-- voor MotoScan/GS-911" CR),
+               id, idHex);
+  }
 
   // Volledige JSON er ook bij, voor loggen naar bestand tijdens een testrit.
   Log.notice(F("[json] %s" CR), message);
@@ -362,6 +386,74 @@ static void drawList(uint32_t nowMs) {
   display.sendBuffer();
 }
 
+// --- ID-weergave ----------------------------------------------------------
+//
+// Bedoeld om het sensor-ID over te nemen in MotoScan, GS-911 of een
+// TPMS-programmeertool.
+//
+// Zowel decimaal als hex, omdat tools daarin verschillen: MotoScan werkt met
+// een decimaal nummer, terwijl op sensoren en in sommige tools de hex-vorm
+// staat. De BMW-fora staan vol met mensen die hex 2260E9 handmatig naar
+// decimaal 2253033 moesten omrekenen. Beide tonen voorkomt die stap en de
+// rekenfout die erbij hoort.
+//
+// De decoder levert een 24-bits ID, dus decimaal maximaal 16777215 (8 cijfers,
+// nagemeten 124 van 128 px) en hex altijd 6 tekens.
+
+// ID-scherm met 1 sensor: decimaal groot, hex eronder.
+static void drawIdSingle(const SensorReading& r) {
+  char dec[12], hex[16];
+  snprintf(dec, sizeof(dec), "%lu", (unsigned long)r.id);
+  snprintf(hex, sizeof(hex), "hex %06lX", (unsigned long)r.id);
+
+  display.clearBuffer();
+
+  display.setFont(u8g2_font_7x13B_tf);
+  display.drawStr(0, 11, "SENSOR ID");
+  display.drawHLine(0, 14, OLED_WIDTH);
+
+  display.setFont(u8g2_font_logisoso24_tn);
+  display.drawStr(0, 42, dec);
+
+  display.setFont(u8g2_font_9x15B_tf);
+  display.drawStr(0, 61, hex);
+
+  display.sendBuffer();
+}
+
+// ID-scherm met 2 sensoren: beide volledig, decimaal links en hex rechts.
+static void drawIdList(void) {
+  display.clearBuffer();
+
+  display.setFont(u8g2_font_6x12_tf);
+  display.drawStr(0, 9, "SENSOR IDs");
+  display.drawHLine(0, 11, OLED_WIDTH);
+
+  int shown = 0;
+  for (int i = 0; i < MAX_SENSORS && shown < 2; i++) {
+    if (!sensors[i].valid) continue;
+
+    char dec[12], hex[12];
+    snprintf(dec, sizeof(dec), "%lu", (unsigned long)sensors[i].id);
+    snprintf(hex, sizeof(hex), "%06lX", (unsigned long)sensors[i].id);
+
+    int baseline = 29 + shown * 23;
+
+    display.setFont(u8g2_font_10x20_tf);
+    display.drawStr(0, baseline, dec);
+
+    display.setFont(u8g2_font_6x12_tf);
+    display.drawStr(OLED_WIDTH - display.getStrWidth(hex), baseline, hex);
+
+    shown++;
+  }
+
+  display.setFont(u8g2_font_5x8_tf);
+  display.drawStr(0, 62, "dec links, hex rechts");
+
+  display.sendBuffer();
+}
+
 // Zoekt het OLED op de bus en initialiseert het.
 //
 // Probeert eerst het geconfigureerde adres, dan het andere gangbare SSD1306-
@@ -434,12 +526,34 @@ static void updateDisplay() {
     }
   }
 
+  // Wisselt tussen meting en ID. De ID-weergave staat langer in beeld, omdat
+  // een nummer foutloos overtypen meer tijd kost dan een druk aflezen.
+  //
+  // De fase hangt aan millis() en niet aan een teller in deze functie, zodat
+  // een gemiste verversing (mutex-timeout) de timing niet laat verschuiven.
+  static uint32_t phaseStart = 0;
+  static bool showId = false;
+  uint32_t phaseLen = showId ? SCREEN_ID_MS : SCREEN_MEASURE_MS;
+  if (nowMs - phaseStart >= phaseLen) {
+    phaseStart = nowMs;
+    showId = !showId;
+  }
+
   if (validCount == 0) {
+    // Zonder meting is er ook geen ID om te tonen.
     drawWaiting();
-  } else if (validCount == 1) {
-    drawSingle(sensors[firstValid], nowMs);
+  } else if (showId) {
+    if (validCount == 1) {
+      drawIdSingle(sensors[firstValid]);
+    } else {
+      drawIdList();
+    }
   } else {
-    drawList(nowMs);
+    if (validCount == 1) {
+      drawSingle(sensors[firstValid], nowMs);
+    } else {
+      drawList(nowMs);
+    }
   }
 
   xSemaphoreGive(sensorMutex);
@@ -599,8 +713,28 @@ void setup() {
 static void demoLoop() {
   static uint32_t lastStep = 0;
   static int step = 0;
-  if (millis() - lastStep < 4000) return;
+  // Langer dan SCREEN_MEASURE_MS + SCREEN_ID_MS, zodat je bij elke stap zowel
+  // het meetscherm als het ID-scherm volledig voorbij ziet komen.
+  if (millis() - lastStep < SCREEN_MEASURE_MS + SCREEN_ID_MS + 2000) return;
   lastStep = millis();
+
+  // Stap 0 gaat via een echt JSON-bericht door rtl_433_Callback(), zodat de
+  // volledige keten getest wordt (parsing, ID-formattering, logregels) en niet
+  // alleen de schermlayout. De overige stappen vullen de slots direct, omdat
+  // die randgevallen in de layout moeten raken.
+  if (step == 0) {
+    char fake[] = "{\"model\":\"Schrader-Motorcycle\",\"type\":\"TPMS\","
+                  "\"id\":5276367,\"pressure_kPa\":238.0,"
+                  "\"temperature_C\":33.0,\"mic\":\"CRC\",\"rssi\":-61}";
+    if (xSemaphoreTake(sensorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      memset(sensors, 0, sizeof(sensors));
+      xSemaphoreGive(sensorMutex);
+    }
+    rtl_433_Callback(fake);
+    Log.notice(F("[demo] stap %d (via callback)" CR), step);
+    step = (step + 1) % 8;
+    return;
+  }
 
   if (xSemaphoreTake(sensorMutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
   memset(sensors, 0, sizeof(sensors));
@@ -626,13 +760,21 @@ static void demoLoop() {
       sensors[1] = {5271842, 241.0f, 35.0f, -70,
                     now - (READING_STALE_SECONDS + 200) * 1000UL, 4, true};
       break;
+    case 5: // breedst mogelijke ID: 24 bits vol, decimaal 8 cijfers
+      sensors[0] = {16777215, 238.0f, 33.0f, -61, now, 2, true};
+      break;
+    case 6: // ID met voorloopnul in hex (282353 = 044EF1), de valkuil bij
+            // het overnemen in een programmeertool
+      sensors[0] = {282353, 238.0f, 33.0f, -61, now, 2, true};
+      break;
     default: // wachtscherm
       break;
   }
   xSemaphoreGive(sensorMutex);
 
+  // 8 stappen: 0-4 metingen, 5-6 ID-randgevallen, 7 wachtscherm.
   Log.notice(F("[demo] stap %d" CR), step);
-  step = (step + 1) % 6;
+  step = (step + 1) % 8;
 }
 #endif
 

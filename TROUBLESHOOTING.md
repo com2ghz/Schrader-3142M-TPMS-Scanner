@@ -390,5 +390,26 @@ De firmware logt elke Schrader-decode twee keer: één leesbare regel en één
 `[json]`-regel. Die laatste is makkelijk te filteren:
 
 ```bash
-grep '^\[json\]' logs/rit-*.log | sed 's/^\[json\] //' > readings.jsonl
+grep '[json]' logs/rit-*.log | sed 's/.*\[json\] //' > readings.jsonl
 ```
+
+### Het sensor-ID terugzoeken
+
+Zoek de regel die er eenmalig per sensor bij komt:
+
+```bash
+grep 'NIEUW ID' logs/rit-*.log
+```
+
+```
+[NIEUW ID] decimaal=5276367  hex=5082CF   <-- voor MotoScan/GS-911
+```
+
+Alle unieke ID's uit een log, als je meerdere ritten in één bestand hebt:
+
+```bash
+grep -o 'id=[0-9]* (hex [0-9A-F]*)' logs/rit-*.log | sort -u
+```
+
+Zie het README-kopje **Sensor-ID overnemen** voor of je tool decimaal of hex
+wil, en waarom de voorloopnullen in de hex-vorm belangrijk zijn.

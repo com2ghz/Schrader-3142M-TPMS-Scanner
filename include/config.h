@@ -59,4 +59,14 @@
 // lopen, dus we verversen ook zonder nieuwe decode.
 #define DISPLAY_REFRESH_MS 500
 
+// ---------------------------------------------------------------------------
+// Schermwisseling
+// ---------------------------------------------------------------------------
+// Het scherm wisselt tussen een meetweergave (druk/temperatuur) en een
+// ID-weergave. De ID-weergave is bedoeld om het nummer over te nemen in
+// MotoScan / GS-911 / een TPMS-tool, dus die staat langer in beeld: een ID
+// foutloos overtypen kost meer tijd dan een druk aflezen.
+#define SCREEN_MEASURE_MS 5000
+#define SCREEN_ID_MS      8000
+
 #endif // SCHRADERSCANNER_CONFIG_H

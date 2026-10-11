@@ -106,15 +106,27 @@ Die zijn nuttig: ze bewijzen dat de ontvangstketen werkt.
 
 Dit is een scherm van 2,4 cm. Daar passen technisch zes regels mini-font op,
 maar die zijn in de hand onleesbaar en op een rijdende motor helemaal. De
-layout toont daarom **weinig, maar groot**:
+layout toont daarom **weinig, maar groot**, en **wisselt** tussen een meting
+en het sensor-ID.
 
-**Eén sensor:**
+**Meting, één sensor** (5 seconden in beeld):
 
 ```
  ____________________
 | 2.38          bar  |   <- druk, 34px hoog
 |                    |
 | 33C      12s       |   <- temperatuur en leeftijd
+ --------------------
+```
+
+**Sensor-ID** (8 seconden in beeld — zie [Sensor-ID overnemen](#sensor-id-overnemen)):
+
+```
+ ____________________
+| SENSOR ID          |
+|--------------------|
+| 5276367            |   <- decimaal, groot
+| hex 5082CF         |   <- zelfde ID in hex
  --------------------
 ```
 
@@ -131,6 +143,18 @@ van het sensor-ID:
  --------------------
 ```
 
+En de bijbehorende ID-weergave met beide volledige nummers:
+
+```
+ ____________________
+| SENSOR IDs         |
+|--------------------|
+| 5276367     5082CF |
+| 5271842     504F62 |
+| dec links, hex rechts
+ --------------------
+```
+
 De **leeftijd** is belangrijk: zonder die aanduiding lees je een meting van
 tien minuten oud alsof die actueel is. Boven 90 seconden wordt de regel
 **inverted** (witte balk) — dat valt met één blik op, terwijl het woord "OUD"
@@ -142,8 +166,8 @@ seriële log. Daar kun je ze rustig lezen; op het scherm zouden ze alleen de
 cijfers kleiner maken.
 
 Alle posities zijn tegen de echte U8g2-fontmetrieken nagemeten, inclusief de
-randgevallen `10.25` (breedste druk) en `-12C` (breedste temperatuur), zodat
-er niets afgekapt wordt.
+randgevallen `10.25` (breedste druk), `-12C` (breedste temperatuur) en
+`16777215` (breedste ID: 124 van 128 px), zodat er niets afgekapt wordt.
 
 ### Layout bekijken zonder sensor
 
@@ -151,9 +175,69 @@ er niets afgekapt wordt.
 .venv/bin/pio run -e demo -t upload
 ```
 
-Doorloopt elke 4 seconden alle schermen met nepmetingen: één sensor, breedste
-waarden, oude meting, twee sensoren, wachtscherm. Daarna de normale build
-terugflashen met `.venv/bin/pio run -t upload`.
+Doorloopt alle schermen met nepmetingen: één sensor, breedste waarden, oude
+meting, twee sensoren, breedste ID, een ID met voorloopnul in hex, en het
+wachtscherm. Elke stap duurt lang genoeg om zowel het meet- als het ID-scherm
+voorbij te zien komen.
+
+Stap 0 gaat door de **echte** `rtl_433_Callback()` met een compleet
+JSON-bericht, dus die test de hele keten — parsing, ID-formattering en de
+logregels — en niet alleen de schermlayout.
+
+Daarna de normale build terugflashen met `.venv/bin/pio run -t upload`.
+
+## Sensor-ID overnemen
+
+Om een sensor in je motor te registreren (MotoScan, GS-911, een TPMS-tool)
+heb je het sensor-ID nodig. Dat staat op twee plekken.
+
+**Op het scherm**, afwisselend met de meting, 8 seconden per keer. Langer dan
+de meetweergave, omdat een nummer foutloos overtypen meer tijd kost dan een
+druk aflezen.
+
+**In de seriële log**, bij elk pakket plus een losse regel zodra een ID voor
+het eerst langskomt:
+
+```
+[SCHRADER] id=5276367 (hex 5082CF)  2.380 bar (238.0 kPa, raw=476)  33.0 C  rssi=-61
+[NIEUW ID] decimaal=5276367  hex=5082CF   <-- voor MotoScan/GS-911
+```
+
+Die `[NIEUW ID]`-regel is er omdat er tijdens een testrit honderden regels
+voorbijkomen. Zo kun je hem terugzoeken:
+
+```bash
+grep 'NIEUW ID' logs/rit-*.log
+```
+
+### Decimaal of hex?
+
+**Beide worden getoond, want tools verschillen hierin** en dat is een bekende
+valkuil. Op de BMW-fora staan meerdere mensen die hun ID als `2260E9` kregen
+en handmatig naar `2253033` moesten omrekenen voordat MotoScan het accepteerde.
+
+- **MotoScan** wil een **decimaal** nummer (vaak 7 cijfers).
+- **GS-911** noemt maximaal 8 cijfers.
+- Op sensorstickers en in sommige tools staat de **hex**-vorm.
+
+Het ID is intern 24 bits — het is niet "eigenlijk" decimaal of hex, dat is
+alleen de weergave. Decimaal is dus maximaal `16777215`, hex altijd 6 tekens.
+
+**Let op de voorloopnullen.** De hex-weergave is altijd op 6 tekens
+aangevuld: ID `282353` is `044EF1`, niet `44EF1`. Sommige tools eisen alle
+zes de tekens. Dit is met opzet zo geformatteerd — ArduinoLog's eigen
+`%X` negeert veldbreedtes en zou die nul laten vallen.
+
+### Welke sensor zit op welk wiel?
+
+Dat weet deze scanner **niet**. De ID's zijn willekeurige nummers; er zit geen
+voor/achter-informatie in het protocol. Bij twee sensoren staan ze simpelweg
+in de volgorde waarin ze binnenkwamen.
+
+Wil je weten welke welke is, wek er dan één tegelijk: laat lucht uit één band
+ontsnappen en kijk welk ID er verschijnt. De GS-911-documentatie raadt om
+dezelfde reden aan om **niet** te gaan rijden tijdens het aanleren — dan zijn
+beide sensoren actief en weet de motor ook niet welke hij moet leren.
 
 ## Belangrijk: de sensor zendt bijna nooit
 
