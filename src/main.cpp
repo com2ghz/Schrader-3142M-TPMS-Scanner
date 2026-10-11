@@ -206,12 +206,43 @@ static bool i2cDeviceAt(uint8_t addr) {
   return Wire.endTransmission() == 0;
 }
 
+// --- Layout ---------------------------------------------------------------
+//
+// Dit is een 0.96" scherm: ~24 mm breed. Daar passen technisch zes regels
+// mini-font op, maar die zijn in de hand onleesbaar, en op een motor
+// helemaal. De layout toont daarom weinig, maar groot:
+//
+//   1 sensor : druk 34px hoog, daaronder temperatuur en leeftijd op 10x20
+//   2 sensoren: twee helften van 32px, druk 24px hoog
+//
+// Details als rssi, pakketteller, kPa en de ruwe waarde staan alleen nog in
+// de seriele log; daar kun je ze rustig lezen.
+//
+// Een oude meting krijgt een inverted balk. Dat valt met een blik op, terwijl
+// het woord "OUD" in klein font juist wegvalt.
+//
+// Alle posities zijn op de host nagemeten tegen de echte U8g2-fontmetrieken,
+// inclusief de randgevallen "10.25" (breedste druk) en "-12C" (breedste temp).
+
+// Schrijft de leeftijd compact: "12s", "90s", "14m", "3u".
+// In klein formaat is "840s" niet te interpreteren, "14m" wel.
+static void formatAge(uint32_t ageS, char* out, size_t n) {
+  if (ageS < 100) {
+    snprintf(out, n, "%lus", (unsigned long)ageS);
+  } else if (ageS < 3600) {
+    snprintf(out, n, "%lum", (unsigned long)(ageS / 60));
+  } else {
+    snprintf(out, n, "%luu", (unsigned long)(ageS / 3600));
+  }
+}
+
 static void drawSplash(const char* line1, const char* line2) {
   display.clearBuffer();
-  display.setFont(u8g2_font_6x12_tf);
-  display.drawStr(0, 12, line1);
+  display.setFont(u8g2_font_10x20_tf);
+  display.drawStr(0, 20, line1);
   if (line2) {
-    display.drawStr(0, 26, line2);
+    display.setFont(u8g2_font_6x12_tf);
+    display.drawStr(0, 38, line2);
   }
   display.sendBuffer();
 }
@@ -220,107 +251,113 @@ static void drawSplash(const char* line1, const char* line2) {
 static void drawWaiting() {
   display.clearBuffer();
 
+  display.setFont(u8g2_font_10x20_tf);
+  display.drawStr(0, 17, "Wachten op");
+  display.drawStr(0, 36, "sensor");
+
   display.setFont(u8g2_font_6x12_tf);
-  display.drawStr(0, 10, "Wachten op sensor");
-
-  display.setFont(u8g2_font_5x8_tf);
   char buf[32];
-  snprintf(buf, sizeof(buf), "433.92 MHz  rssi %d", rtl_433_ESP::currentRssi);
-  display.drawStr(0, 24, buf);
+  snprintf(buf, sizeof(buf), "433.92MHz  rssi %d", rtl_433_ESP::currentRssi);
+  display.drawStr(0, 51, buf);
 
-  snprintf(buf, sizeof(buf), "drempel %d  sig %u",
-           rtl_433_ESP::rssiThreshold,
-           (unsigned)rtl_433_ESP::decoderSignals);
-  display.drawStr(0, 34, buf);
-
-  snprintf(buf, sizeof(buf), "andere decodes: %u", (unsigned)otherPacketCount);
-  display.drawStr(0, 44, buf);
-
-  // y=62 en niet 63: u8g2_font_5x8_tf heeft descent -1, dus op baseline 63
-  // worden de staarten van 'p' en 'g' tegen de bufferrand afgekapt.
-  display.drawStr(0, 54, "sensor zendt bij rollen");
-  display.drawStr(0, 62, "of drukdaling >2psi");
+  // De sensor zendt alleen bij rollen of drukdaling. Zonder deze hint ga je
+  // zoeken naar een storing die er niet is.
+  display.drawStr(0, 62, "rijden of lucht eruit");
 
   display.sendBuffer();
 }
 
-// Scherm met 1 sensor: groot.
+// Scherm met 1 sensor: druk zo groot als past.
 static void drawSingle(const SensorReading& r, uint32_t nowMs) {
   uint32_t ageS = (nowMs - r.lastSeenMs) / 1000UL;
   bool stale = ageS > READING_STALE_SECONDS;
 
-  char buf[32];
+  char bar[12], temp[12], age[12];
+  snprintf(bar, sizeof(bar), "%.2f", r.pressure_kPa / 100.0f);
+  snprintf(temp, sizeof(temp), "%.0fC", r.temperature_C);
+  formatAge(ageS, age, sizeof(age));
 
   display.clearBuffer();
 
-  // Druk, groot.
-  display.setFont(u8g2_font_logisoso24_tn);
-  snprintf(buf, sizeof(buf), "%.2f", r.pressure_kPa / 100.0f);
-  display.drawStr(0, 30, buf);
+  // Druk, 34px hoog.
+  display.setFont(u8g2_font_logisoso34_tn);
+  display.drawStr(0, 37, bar);
+  int barWidth = display.getStrWidth(bar);
 
-  display.setFont(u8g2_font_6x12_tf);
-  display.drawStr(84, 30, "bar");
-
-  // Temperatuur.
-  display.setFont(u8g2_font_6x12_tf);
-  snprintf(buf, sizeof(buf), "%.0f C", r.temperature_C);
-  display.drawStr(0, 44, buf);
-
-  // ID.
-  display.setFont(u8g2_font_5x8_tf);
-  snprintf(buf, sizeof(buf), "id %lu", (unsigned long)r.id);
-  display.drawStr(44, 44, buf);
-
-  // Statusregel: leeftijd, rssi, aantal pakketten.
-  if (stale) {
-    snprintf(buf, sizeof(buf), "OUD %lus  rssi %d  n%lu",
-             (unsigned long)ageS, r.rssi, (unsigned long)r.packetCount);
-  } else {
-    snprintf(buf, sizeof(buf), "%lus geleden  rssi %d  n%lu",
-             (unsigned long)ageS, r.rssi, (unsigned long)r.packetCount);
+  // "bar" rechts van het getal. Positie meebewegen met de breedte, zodat
+  // "10.25" niet onder het label schuift.
+  display.setFont(u8g2_font_7x13B_tf);
+  int labelX = barWidth + 4;
+  int labelW = display.getStrWidth("bar");
+  if (labelX > OLED_WIDTH - labelW) {
+    labelX = OLED_WIDTH - labelW;
   }
-  display.drawStr(0, 56, buf);
+  display.drawStr(labelX, 16, "bar");
 
-  snprintf(buf, sizeof(buf), "%.0f kPa  raw %d",
-           r.pressure_kPa, (int)lroundf(r.pressure_kPa / 0.5f));
-  display.drawStr(0, 62, buf);
+  // Onderste regel. Inverted als de meting oud is.
+  if (stale) {
+    display.drawBox(0, 43, OLED_WIDTH, 21);
+    display.setDrawColor(0);
+  }
+  display.setFont(u8g2_font_10x20_tf);
+  int x = stale ? 2 : 0;
+  display.drawStr(x, 61, temp);
+  display.drawStr(x + display.getStrWidth(temp) + 20, 61, age);
+  display.setDrawColor(1);
 
   display.sendBuffer();
 }
 
-// Scherm met meerdere sensoren: compacte lijst.
+// Scherm met 2 sensoren: twee helften van 32px.
 static void drawList(uint32_t nowMs) {
   display.clearBuffer();
-  display.setFont(u8g2_font_5x8_tf);
 
-  char buf[40];
-  int y = 8;
-
-  for (int i = 0; i < MAX_SENSORS; i++) {
+  int shown = 0;
+  for (int i = 0; i < MAX_SENSORS && shown < 2; i++) {
     if (!sensors[i].valid) continue;
 
-    uint32_t ageS = (nowMs - sensors[i].lastSeenMs) / 1000UL;
+    const SensorReading& r = sensors[i];
+    uint32_t ageS = (nowMs - r.lastSeenMs) / 1000UL;
     bool stale = ageS > READING_STALE_SECONDS;
+    int top = shown * 32;
 
-    snprintf(buf, sizeof(buf), "%lu", (unsigned long)sensors[i].id);
-    display.drawStr(0, y, buf);
+    char bar[12], temp[12], age[12], id[12];
+    snprintf(bar, sizeof(bar), "%.2f", r.pressure_kPa / 100.0f);
+    snprintf(temp, sizeof(temp), "%.0fC", r.temperature_C);
+    formatAge(ageS, age, sizeof(age));
+    // Laatste 4 cijfers van het ID: genoeg om twee sensoren te onderscheiden
+    // en het past naast de druk. Welke sensor op welk wiel zit weten we niet,
+    // dus "VOOR"/"ACHTER" zou een gok zijn die er zeker uitziet.
+    snprintf(id, sizeof(id), "%lu", (unsigned long)(r.id % 10000UL));
 
-    snprintf(buf, sizeof(buf), "%.2fb", sensors[i].pressure_kPa / 100.0f);
-    display.drawStr(54, y, buf);
+    if (stale) {
+      display.drawBox(0, top, OLED_WIDTH, 31);
+      display.setDrawColor(0);
+    }
 
-    snprintf(buf, sizeof(buf), "%.0fC", sensors[i].temperature_C);
-    display.drawStr(88, y, buf);
+    display.setFont(u8g2_font_logisoso24_tn);
+    display.drawStr(0, top + 25, bar);
+    int barWidth = display.getStrWidth(bar);
 
-    snprintf(buf, sizeof(buf), "%s%lus", stale ? "!" : "", (unsigned long)ageS);
-    display.drawStr(108, y, buf);
+    display.setFont(u8g2_font_6x12_tf);
+    display.drawStr(barWidth + 3, top + 12, "bar");
 
-    y += 10;
-    if (y > 50) break;
+    display.setFont(u8g2_font_7x13B_tf);
+    display.drawStr(barWidth + 3, top + 26, temp);
+
+    // ID en leeftijd rechts uitgelijnd.
+    display.setFont(u8g2_font_6x12_tf);
+    display.drawStr(OLED_WIDTH - display.getStrWidth(id), top + 12, id);
+    display.drawStr(OLED_WIDTH - display.getStrWidth(age), top + 26, age);
+
+    display.setDrawColor(1);
+    shown++;
   }
 
-  snprintf(buf, sizeof(buf), "rssi %d  pkt %u",
-           rtl_433_ESP::currentRssi, (unsigned)schraderPacketCount);
-  display.drawStr(0, 62, buf);
+  // Scheidingslijn tussen de twee helften.
+  if (shown > 1) {
+    display.drawHLine(0, 31, OLED_WIDTH);
+  }
 
   display.sendBuffer();
 }
@@ -375,7 +412,8 @@ static void setupDisplay() {
   display.begin();
   display.setFontMode(1);
   displayPresent = true;
-  drawSplash("Schrader TPMS", "radio starten...");
+  // "Schrader TPMS" is op 10x20 130px breed en zou afgekapt worden.
+  drawSplash("Schrader", "TPMS  radio starten");
 }
 
 static void updateDisplay() {
@@ -550,11 +588,62 @@ void setup() {
   Log.notice(F("=== setup klaar ===" CR));
 }
 
+// ---------------------------------------------------------------------------
+// Demo-modus (env: demo)
+// ---------------------------------------------------------------------------
+// Voert nepmetingen in zodat je de schermlayout kunt beoordelen zonder op een
+// zendende sensor te wachten. Doorloopt 1 sensor, 2 sensoren, en een oude
+// meting, en gebruikt de randgevallen die het snelst layoutfouten blootleggen
+// ("10.25" is de breedst mogelijke druk, "-12C" de breedste temperatuur).
+#ifdef DEMO_MODE
+static void demoLoop() {
+  static uint32_t lastStep = 0;
+  static int step = 0;
+  if (millis() - lastStep < 4000) return;
+  lastStep = millis();
+
+  if (xSemaphoreTake(sensorMutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+  memset(sensors, 0, sizeof(sensors));
+  uint32_t now = millis();
+
+  switch (step) {
+    case 0: // 1 sensor, normaal
+      sensors[0] = {5276367, 238.0f, 33.0f, -61, now, 7, true};
+      break;
+    case 1: // 1 sensor, breedste druk en temperatuur
+      sensors[0] = {5276367, 1025.0f, -12.0f, -78, now, 3, true};
+      break;
+    case 2: // 1 sensor, oude meting (inverted balk)
+      sensors[0] = {5276367, 238.0f, 33.0f, -61,
+                    now - (READING_STALE_SECONDS + 800) * 1000UL, 7, true};
+      break;
+    case 3: // 2 sensoren
+      sensors[0] = {5276367, 238.0f, 33.0f, -61, now, 7, true};
+      sensors[1] = {5271842, 241.0f, 35.0f, -70, now, 4, true};
+      break;
+    case 4: // 2 sensoren, tweede oud
+      sensors[0] = {5276367, 238.0f, 33.0f, -61, now, 7, true};
+      sensors[1] = {5271842, 241.0f, 35.0f, -70,
+                    now - (READING_STALE_SECONDS + 200) * 1000UL, 4, true};
+      break;
+    default: // wachtscherm
+      break;
+  }
+  xSemaphoreGive(sensorMutex);
+
+  Log.notice(F("[demo] stap %d" CR), step);
+  step = (step + 1) % 6;
+}
+#endif
+
 void loop() {
   rf.loop();
 
 #ifdef CC1101_OOK_TUNING
   tuneLoop();
+#endif
+#ifdef DEMO_MODE
+  demoLoop();
 #endif
 
   static uint32_t lastDisplay = 0;

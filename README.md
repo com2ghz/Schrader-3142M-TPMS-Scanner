@@ -102,12 +102,58 @@ tegen een manometer narekenen.
 Decodes van andere 433 MHz-apparaten in de buurt komen langs als `[other]`.
 Die zijn nuttig: ze bewijzen dat de ontvangstketen werkt.
 
-Op het OLED: druk groot in bar, daaronder temperatuur, sensor-ID, RSSI en
-**hoe lang geleden** de meting binnenkwam. Die laatste is belangrijk — zonder
-leeftijd lees je straks een meting van tien minuten oud alsof die actueel is.
-Boven 90 seconden staat er `OUD` bij.
+### Op het OLED
 
-Bij meerdere sensoren schakelt het scherm over naar een compacte lijst.
+Dit is een scherm van 2,4 cm. Daar passen technisch zes regels mini-font op,
+maar die zijn in de hand onleesbaar en op een rijdende motor helemaal. De
+layout toont daarom **weinig, maar groot**:
+
+**Eén sensor:**
+
+```
+ ____________________
+| 2.38          bar  |   <- druk, 34px hoog
+|                    |
+| 33C      12s       |   <- temperatuur en leeftijd
+ --------------------
+```
+
+**Twee sensoren** (voor- en achterwiel), twee helften met de laatste 4 cijfers
+van het sensor-ID:
+
+```
+ ____________________
+| 2.38 bar     6367  |
+|      33C      12s  |
+|--------------------|
+| 2.41 bar     1842  |
+|      35C       4s  |
+ --------------------
+```
+
+De **leeftijd** is belangrijk: zonder die aanduiding lees je een meting van
+tien minuten oud alsof die actueel is. Boven 90 seconden wordt de regel
+**inverted** (witte balk) — dat valt met één blik op, terwijl het woord "OUD"
+in klein font juist wegvalt. Leeftijden worden compact geschreven: `12s`,
+`90s`, `14m`, `3u`.
+
+Details als RSSI, pakketteller, kPa en de ruwe waarde staan alleen in de
+seriële log. Daar kun je ze rustig lezen; op het scherm zouden ze alleen de
+cijfers kleiner maken.
+
+Alle posities zijn tegen de echte U8g2-fontmetrieken nagemeten, inclusief de
+randgevallen `10.25` (breedste druk) en `-12C` (breedste temperatuur), zodat
+er niets afgekapt wordt.
+
+### Layout bekijken zonder sensor
+
+```bash
+.venv/bin/pio run -e demo -t upload
+```
+
+Doorloopt elke 4 seconden alle schermen met nepmetingen: één sensor, breedste
+waarden, oude meting, twee sensoren, wachtscherm. Daarna de normale build
+terugflashen met `.venv/bin/pio run -t upload`.
 
 ## Belangrijk: de sensor zendt bijna nooit
 
@@ -154,6 +200,7 @@ In deze volgorde, anders weet je niet wat je aan het debuggen bent:
 | Env | Waarvoor |
 |---|---|
 | `schraderscanner` | normale build, dit is wat je wilt flashen |
+| `demo` | nepmetingen, om de schermlayout te bekijken |
 | `diag_raw` | dumpt pulse/gap-timings van elk signaal |
 | `diag_schrader` | laat decoder 196 zelf loggen waar hij faalt |
 | `diag_fsk` | FSK-pad, om te zien of er signaal is (decodeert **niet**) |

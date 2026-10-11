@@ -319,6 +319,44 @@ alleen je scherm blijft zwart.
 
 ---
 
+## Tekst op het scherm is te klein of vervormd
+
+Flash eerst de demo-build, dan hoef je niet op de sensor te wachten om het
+scherm te beoordelen:
+
+```bash
+.venv/bin/pio run -e demo -t upload
+```
+
+Die doorloopt elke 4 seconden alle layouts, inclusief de breedste waarden.
+
+**Te klein maar wel recht en leesbaar:** de layout is afgestemd op 128×64. Zit
+er een **128×32** paneel in je kit, dan wordt alles op halve hoogte gerenderd
+en valt de onderste helft weg. Pas dan de constructor in `src/main.cpp` aan:
+
+```cpp
+U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE,
+                                               OLED_SCL_PIN, OLED_SDA_PIN);
+```
+
+En zet `OLED_HEIGHT` in `include/config.h` op 32. De layout moet dan opnieuw
+ingedeeld worden; met 32 pixels past één meting, niet twee.
+
+**Vervormd, verschoven of met strepen:** dan is het waarschijnlijk geen
+SSD1306 maar een **SH1106**-controller. Die heeft een buffer van 132 pixels
+breed, waardoor het beeld 2 pixels opschuift en de rand rommel toont. Gebruik:
+
+```cpp
+U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE,
+                                           OLED_SCL_PIN, OLED_SDA_PIN);
+```
+
+**Dubbel beeld of elke tweede regel verschoven:** een paneel met een andere
+pagina-indeling. Probeer de `_VCOMH0` of `_ALT0` varianten van de
+SSD1306-constructor.
+
+---
+
 ## De drukwaarde lijkt verkeerd
 
 De decoder rekent `pressure_kPa = raw * 0.5`. Die schaal is in rtl_433

@@ -21,10 +21,12 @@
 // Sensor-tracking
 // ---------------------------------------------------------------------------
 
-// Aantal sensoren dat we tegelijk bijhouden. Een motor heeft 2 wielen; 4 geeft
-// ruimte om een losse sensor op de werkbank mee te nemen zonder dat een
-// bestaande meting verdrongen wordt.
-#define MAX_SENSORS 4
+// Aantal sensoren dat we tegelijk bijhouden.
+//
+// 2 en niet 4: een motor heeft twee wielen, en op een 0.96" scherm zijn twee
+// metingen het maximum dat nog leesbaar groot past. Een derde sensor zou het
+// lettertype zo klein maken dat je er tijdens het rijden niets aan hebt.
+#define MAX_SENSORS 2
 
 // Na hoeveel seconden een meting als "oud" op het OLED gemarkeerd wordt.
 // De Schrader RDC3 zendt rollend elke ~10s tot ~60s; stilstaand veel minder
