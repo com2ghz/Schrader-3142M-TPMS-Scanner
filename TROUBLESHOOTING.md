@@ -11,6 +11,60 @@ het debuggen bent.
 
 ---
 
+## Upload mislukt
+
+### "Unable to verify flash chip connection (No serial data received.)"
+
+Meestal **te hoge upload-snelheid**, niet een defect board. Typisch beeld:
+
+```
+Changing baud rate to 921600
+Changed.
+A fatal error occurred: Unable to verify flash chip connection (No serial data received.).
+```
+
+Vaak staat erboven ook:
+
+```
+WARNING: Detected crystal freq 15.67MHz is quite different to normalized freq 26MHz.
+```
+
+Die kristal-waarschuwing is **geen hardwareprobleem**. Het is een symptoom van
+dezelfde onbetrouwbare seriële link: esptool kan de timing niet goed meten.
+Zodra de snelheid omlaag gaat, verdwijnt de melding.
+
+Dit board heeft een CP2102 en hangt achter een keten USB-hubs. Daar is 921600
+(de waarde uit de rtl_433_ESP voorbeelden) te snel. `platformio.ini` staat
+daarom op **460800**, wat hier 3 van 3 uploads haalde met een schone
+`Hash of data verified`.
+
+Werkt 460800 bij jou nog niet betrouwbaar:
+
+1. Zet in `platformio.ini` **beide** waarden op 115200:
+   ```ini
+   monitor_speed = 115200
+   upload_speed = 115200
+   ```
+2. Pas `SERIAL_BAUD` in `include/config.h` naar dezelfde waarde aan.
+
+Die twee moeten gelijk blijven. De sketch heeft een `#error` die de build laat
+falen als ze uit elkaar lopen, want anders zie je in de monitor alleen
+onleesbare tekens — wat op een stukke ESP32 lijkt terwijl het alleen een
+baudrate-verschil is.
+
+Verder nog: sluit de ESP32 direct op de PC aan in plaats van via een hub, en
+gebruik een korte, goede USB-kabel.
+
+### Onleesbare tekens in de monitor
+
+Een paar regels rommel **direct na een reset** is normaal: dat is de ESP32
+bootloader, die op een andere vaste snelheid praat dan onze firmware. Zodra
+`=== Schrader TPMS scanner ===` verschijnt, is de link goed.
+
+Blijft *alles* onleesbaar, dan wijkt `monitor_speed` af van `SERIAL_BAUD`.
+
+---
+
 ## De sensor zendt bijna nooit
 
 Uit de FCC-documentatie van de Schrader RDC3 (FCC ID MRXRDC3):
@@ -218,13 +272,50 @@ Dit is alleen zinvol als de sensor ondertussen blíjft zenden — dus met een
 
 ## OLED blijft leeg
 
-1. Log zegt `OLED niet gevonden op 0x3c` → probeer het andere adres. In
-   `include/config.h`:
-   ```c
-   #define OLED_I2C_ADDR 0x3D
-   ```
-2. SDA=21, SCL=22, VCC op 3V3.
-3. De scanner werkt zonder OLED gewoon door via serieel; dit is niet fataal.
+De firmware zoekt het scherm zelf op: eerst het adres uit `config.h`, dan
+0x3C en 0x3D. Lukt dat niet, dan scant hij de hele I²C-bus en logt wat er wel
+hangt. Je hoeft dus geen losse scanner-sketch te flashen; lees gewoon de
+seriële output bij het opstarten.
+
+**Geval 1 — scherm gevonden op een ander adres:**
+
+```
+W: OLED op 0x3d in plaats van de ingestelde 0x3c. Werkt, maar pas OLED_I2C_ADDR in config.h aan.
+```
+
+Werkt meteen. Zet het adres alsnog in `include/config.h` zodat de melding weg
+is.
+
+**Geval 2 — wel apparaten, niet het OLED:**
+
+```
+E: Geen OLED gevonden op 0x3C of 0x3D. Bus scannen...
+E:   I2C-apparaat op 0x68
+E:   Zet het juiste adres in include/config.h bij OLED_I2C_ADDR.
+```
+
+De bus werkt. Is 0x68 je enige apparaat, dan is dat geen SSD1306 (dat is een
+typisch adres voor een gyro/RTC) — check of je het juiste moduletype hebt.
+
+**Geval 3 — niets op de bus:**
+
+```
+E: Geen OLED gevonden op 0x3C of 0x3D. Bus scannen...
+E:   Niets op de bus. Check: VCC op 3V3, GND gedeeld, SDA=GPIO21, SCL=GPIO22 niet verwisseld.
+```
+
+Geen enkel apparaat op 127 adressen. Dat is bedrading, geen adresprobleem:
+
+1. **VCC op 3V3** en **GND gedeeld** met de ESP32. Zonder gemeenschappelijke
+   massa werkt I²C niet, ook al zit VCC goed.
+2. **SDA op GPIO 21, SCL op GPIO 22.** Verwisseld is de meest voorkomende fout.
+3. Draadjes echt doorverbonden — bij breakout boards en breadboards is een
+   slecht contact snel gemaakt. Meet desnoods door.
+4. Sommige goedkope modules hebben geen pull-up-weerstanden aan boord. In dat
+   geval 4.7k–10k van SDA en SCL naar 3V3.
+
+De scanner werkt zonder OLED gewoon door via serieel. Dit is dus niet fataal —
+alleen je scherm blijft zwart.
 
 ---
 

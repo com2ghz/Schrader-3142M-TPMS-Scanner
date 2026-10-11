@@ -54,11 +54,37 @@ python3 -m venv .venv
 .venv/bin/pio device monitor
 ```
 
-De monitor draait op 921600 baud. Dat staat al in `platformio.ini`, dus
+De monitor draait op **460800** baud. Dat staat al in `platformio.ini`, dus
 `pio device monitor` zonder argumenten is goed.
+
+Niet de 921600 uit de rtl_433_ESP voorbeelden: dit board heeft een CP2102
+achter USB-hubs en faalde daar wisselend bij het uploaden
+("Unable to verify flash chip connection"). Op 460800 is dat opgelost. Zie
+TROUBLESHOOTING.md als je het alsnog tegenkomt.
+
+Een paar regels rommel direct na een reset is normaal — dat is de ESP32
+bootloader op een andere vaste snelheid. Zodra
+`=== Schrader TPMS scanner ===` verschijnt, is de link goed.
 
 Verschijnt de ESP32 niet, check dan of `/dev/ttyUSB0` bestaat na het
 aansluiten. Je zit al in de `dialout`-groep, dus rechten horen te kloppen.
+
+### Controleren of de radio werkt
+
+Bij het opstarten dumpt de firmware de CC1101-registers. De regel die telt:
+
+```
+CC1101_VERSION: 0x14
+```
+
+`0x14` betekent dat de SPI-bus werkt en de module antwoordt. `0x00` of `0xff`
+betekent dat de bedrading van SCK/MOSI/MISO/CSN niet klopt.
+
+Daarna hoort er een RSSI-kalibratie te komen met een **variërende** waarde:
+
+```
+Initial RSSI calibration complete: average -64 dbm, threshold -55 dbm, peak -58 dbm
+```
 
 ## Wat je ziet
 

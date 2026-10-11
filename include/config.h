@@ -44,7 +44,10 @@
 // ---------------------------------------------------------------------------
 // Serieel
 // ---------------------------------------------------------------------------
-#define SERIAL_BAUD 921600
+// Moet gelijk zijn aan monitor_speed in platformio.ini, anders zie je in de
+// monitor alleen onleesbare tekens. 460800 omdat 921600 via een CP2102 achter
+// USB-hubs niet betrouwbaar is; zie de toelichting in platformio.ini.
+#define SERIAL_BAUD 460800
 
 // JSON-buffer voor rtl_433_ESP. Decode-berichten zijn klein (~200 byte), maar
 // de library deelt deze buffer met alle 223 decoders; sommige zijn breedsprakig.

@@ -42,6 +42,14 @@
 #  error "CC1101 datapin botst met de I2C-pinnen van het OLED"
 #endif
 
+// SERIAL_BAUD (config.h) en monitor_speed (platformio.ini) moeten gelijk zijn.
+// Lopen ze uiteen, dan start de scanner gewoon op maar zie je in de monitor
+// alleen onleesbare tekens; dat lijkt op een stukke ESP32 terwijl het alleen
+// een baudrate-verschil is. MONITOR_SPEED wordt als build flag doorgegeven.
+#if defined(MONITOR_SPEED) && (MONITOR_SPEED != SERIAL_BAUD)
+#  error "SERIAL_BAUD in config.h wijkt af van monitor_speed in platformio.ini"
+#endif
+
 // ---------------------------------------------------------------------------
 // Globals
 // ---------------------------------------------------------------------------
@@ -192,6 +200,12 @@ void rtl_433_Callback(char* message) {
 // OLED
 // ---------------------------------------------------------------------------
 
+// Probeert of er op dit adres een apparaat antwoordt.
+static bool i2cDeviceAt(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
 static void drawSplash(const char* line1, const char* line2) {
   display.clearBuffer();
   display.setFont(u8g2_font_6x12_tf);
@@ -309,6 +323,59 @@ static void drawList(uint32_t nowMs) {
   display.drawStr(0, 62, buf);
 
   display.sendBuffer();
+}
+
+// Zoekt het OLED op de bus en initialiseert het.
+//
+// Probeert eerst het geconfigureerde adres, dan het andere gangbare SSD1306-
+// adres. Antwoordt geen van beide, dan scant hij de hele bus en logt wat er
+// wel hangt. Dat scheelt een losse scanner-sketch flashen.
+static void setupDisplay() {
+  const uint8_t candidates[] = {OLED_I2C_ADDR, 0x3C, 0x3D};
+  uint8_t addr = 0;
+
+  for (uint8_t c : candidates) {
+    if (i2cDeviceAt(c)) {
+      addr = c;
+      break;
+    }
+  }
+
+  if (addr == 0) {
+    Log.error(F("Geen OLED gevonden op 0x3C of 0x3D. Bus scannen..." CR));
+    int found = 0;
+    for (uint8_t a = 1; a < 127; a++) {
+      if (i2cDeviceAt(a)) {
+        Log.error(F("  I2C-apparaat op 0x%x" CR), a);
+        found++;
+      }
+    }
+    if (found == 0) {
+      Log.error(F("  Niets op de bus. Check: VCC op 3V3, GND gedeeld, "
+                  "SDA=GPIO%d, SCL=GPIO%d niet verwisseld." CR),
+                OLED_SDA_PIN, OLED_SCL_PIN);
+    } else {
+      Log.error(F("  Zet het juiste adres in include/config.h bij "
+                  "OLED_I2C_ADDR." CR));
+    }
+    // Niet fataal: de scanner blijft via serieel bruikbaar.
+    displayPresent = false;
+    return;
+  }
+
+  if (addr != OLED_I2C_ADDR) {
+    Log.warning(F("OLED op 0x%x in plaats van de ingestelde 0x%x. Werkt, maar "
+                  "pas OLED_I2C_ADDR in config.h aan." CR),
+                addr, OLED_I2C_ADDR);
+  } else {
+    Log.notice(F("OLED gevonden op 0x%x" CR), addr);
+  }
+
+  display.setI2CAddress(addr << 1);
+  display.begin();
+  display.setFontMode(1);
+  displayPresent = true;
+  drawSplash("Schrader TPMS", "radio starten...");
 }
 
 static void updateDisplay() {
@@ -459,25 +526,7 @@ void setup() {
 
   // OLED. De DevKitC heeft geen externe pull-ups nodig voor deze modules.
   Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-
-  // Zelf proben of er iets op het adres antwoordt. U8G2::begin() geeft op deze
-  // build altijd 1 terug en controleert de I2C-ACK niet, dus zonder deze test
-  // levert een verkeerd adres een zwart scherm zonder enige melding.
-  Wire.beginTransmission(OLED_I2C_ADDR);
-  displayPresent = (Wire.endTransmission() == 0);
-
-  if (!displayPresent) {
-    // Niet fataal: de scanner blijft via serieel bruikbaar.
-    Log.error(F("OLED antwoordt niet op 0x%x. Probeer 0x3D in config.h, "
-                "zie TROUBLESHOOTING.md" CR),
-              OLED_I2C_ADDR);
-  } else {
-    display.setI2CAddress(OLED_I2C_ADDR << 1);
-    display.begin();
-    display.setFontMode(1);
-    drawSplash("Schrader TPMS", "radio starten...");
-    Log.notice(F("OLED gevonden op 0x%x" CR), OLED_I2C_ADDR);
-  }
+  setupDisplay();
 
   // Radio.
   rf.initReceiver(RF_MODULE_RECEIVER_GPIO, RF_MODULE_FREQUENCY);
